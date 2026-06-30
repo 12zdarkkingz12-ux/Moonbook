@@ -16,8 +16,13 @@ import {
   isZipFile
 } from './utils';
 
+// 200MB كحد أقصى احترازي — الاستخدام الفعلي أقل بكثير (20-70MB)
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB || 200);
 const MAX_SLICE_HEIGHT = Number(process.env.MAX_SLICE_HEIGHT || 1800);
+
+// ملاحظة: معالجة الصور تتم بشكل متسلسل (صورة وحدة في كل مرة) عمداً —
+// هذا يحافظ على استهلاك ذاكرة منخفض وثابت بدل التوازي، وهو مناسب
+// لموارد Render المجانية المحدودة (512MB RAM)
 
 export const uploadMiddleware = multer({
   dest: TMP_DIR,
@@ -50,7 +55,9 @@ async function extractZip(zipPath: string, destDir: string) {
 }
 
 async function splitTallImage(imagePath: string, outDir: string): Promise<string[]> {
-  const meta = await sharp(imagePath).metadata();
+  // نقرأ الـ metadata فقط أول (سريع وخفيف، ما يفك الصورة كاملة)
+  const probe = sharp(imagePath, { limitInputPixels: false });
+  const meta = await probe.metadata();
   const width = meta.width ?? 0;
   const height = meta.height ?? 0;
 
@@ -61,18 +68,19 @@ async function splitTallImage(imagePath: string, outDir: string): Promise<string
   const ext = path.parse(imagePath).ext || '.png';
   const slices: string[] = [];
 
+  // ✅ نفتح pipeline واحد فقط ونستخدم clone() لكل قطعة
+  // بدل ما نعيد فك تشفير الصورة الكاملة من جديد في كل مرة (كان السبب الرئيسي
+  // لارتفاع استهلاك الذاكرة/المعالجة مع الصور الطويلة جداً مثل صفحات المانهوا)
+  const source = sharp(imagePath, { limitInputPixels: false, sequentialRead: true });
+
   let sliceIndex = 1;
   for (let top = 0; top < height; top += MAX_SLICE_HEIGHT) {
     const sliceHeight = Math.min(MAX_SLICE_HEIGHT, height - top);
     const outPath = path.join(outDir, `${stem}_${String(sliceIndex).padStart(2, '0')}${ext}`);
 
-    await sharp(imagePath)
-      .extract({
-        left: 0,
-        top,
-        width,
-        height: sliceHeight
-      })
+    await source
+      .clone()
+      .extract({ left: 0, top, width, height: sliceHeight })
       .toFile(outPath);
 
     slices.push(outPath);
@@ -121,6 +129,10 @@ export async function processChapterZip(zipPath: string, originalName: string, t
 
       finalImages.push(path.relative(chapterDir, finalPath));
     }
+
+    // ننظف الصورة الأصلية فوراً بدل ما تتراكم مع النسخ المقسّمة
+    // حتى نهاية العملية — يقلل أقصى استخدام للقرص مع ملفات ZIP كبيرة
+    await fs.remove(imagePath).catch(() => {});
   }
 
   finalImages.sort(naturalCompare);

@@ -21,6 +21,17 @@ export function createWebApp(discordClient: Client): Express {
   app.use(express.urlencoded({ extended: true }));
   app.use(express.json());
 
+  // ─── Health Check ─────────────────────────────────────────
+  // مفيد لـ uptime monitors خارجية (UptimeRobot مثلاً) عشان
+  // تتأكد إن السيرفر شغال، وممكن تساعد تمنع Render من تنويم الخدمة
+  app.get('/health', (_req, res) => {
+    res.status(200).json({
+      status: 'ok',
+      uptimeSeconds: Math.round(process.uptime()),
+      memoryMb: Math.round(process.memoryUsage().rss / (1024 * 1024)),
+    });
+  });
+
   // ─── الصفحة الرئيسية ─────────────────────────────────────
   app.get('/', async (_req, res) => {
     const chapters = await listChapters();
