@@ -65,16 +65,27 @@ export async function logChapterUploaded(info: {
   pages: number;
   fileName: string;
   sizeMb: string;
+  skippedJunk?: number;
 }) {
+  const fields = [
+    { name: '📖 الفصل',     value: info.title,          inline: true },
+    { name: '🖼️ الصفحات',  value: String(info.pages),  inline: true },
+    { name: '📁 الملف',     value: info.fileName,       inline: true },
+    { name: '💾 الحجم',     value: `${info.sizeMb} MB`, inline: true },
+  ];
+
+  if (info.skippedJunk && info.skippedJunk > 0) {
+    fields.push({
+      name: '🗑️ صور مستبعدة تلقائياً',
+      value: String(info.skippedJunk),
+      inline: true,
+    });
+  }
+
   await sendLog({
     level: 'success',
     title: 'فصل جديد رُفع',
-    fields: [
-      { name: '📖 الفصل',     value: info.title,          inline: true },
-      { name: '🖼️ الصفحات',  value: String(info.pages),  inline: true },
-      { name: '📁 الملف',     value: info.fileName,       inline: true },
-      { name: '💾 الحجم',     value: `${info.sizeMb} MB`, inline: true },
-    ],
+    fields,
   });
 }
 

@@ -7,6 +7,7 @@ export interface ChapterManifest {
   sourceZipName: string;
   createdAt: string;
   images: string[];
+  skippedJunkImages?: number; // عدد الصور المستبعدة تلقائياً (أيقونات/شعارات صغيرة)
 }
 
 export interface ReaderSession {

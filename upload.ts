@@ -20,6 +20,12 @@ import {
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB || 200);
 const MAX_SLICE_HEIGHT = Number(process.env.MAX_SLICE_HEIGHT || 1800);
 
+// أي صورة عرضها أو طولها أصغر من كذا تُستبعد تلقائياً (أيقونات، شعارات، صور دخيلة
+// من أدوات استخراج صور صفحات الويب مثل mhtml extractors). صفحات المانهوا الحقيقية
+// عادة لا يقل عرضها عن 500-800px، فهذا الحد آمن وما يلمس صفحات حقيقية.
+const MIN_IMAGE_WIDTH = Number(process.env.MIN_IMAGE_WIDTH || 300);
+const MIN_IMAGE_HEIGHT = Number(process.env.MIN_IMAGE_HEIGHT || 300);
+
 // ملاحظة: معالجة الصور تتم بشكل متسلسل (صورة وحدة في كل مرة) عمداً —
 // هذا يحافظ على استهلاك ذاكرة منخفض وثابت بدل التوازي، وهو مناسب
 // لموارد Render المجانية المحدودة (512MB RAM)
@@ -47,11 +53,58 @@ async function walkFiles(dir: string): Promise<string[]> {
   return out;
 }
 
+// ─── فلترة الصور الدخيلة ──────────────────────────────────────
+// تستبعد: ملفات النظام (__MACOSX, .DS_Store)، manifest.json، وأي صورة
+// أبعادها أصغر من الحد الأدنى (أيقونات/شعارات/صور دخيلة من أدوات
+// استخراج صور صفحات الويب مثل mhtml extractors)
+function isJunkPath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, '/');
+  if (normalized.includes('__MACOSX/')) return true;
+
+  const base = path.basename(filePath);
+  if (base === '.DS_Store') return true;
+  if (base === 'manifest.json') return true;
+  if (base.startsWith('.')) return true;
+
+  return false;
+}
+
+async function isLikelyJunkImage(imagePath: string): Promise<boolean> {
+  try {
+    const meta = await sharp(imagePath, { limitInputPixels: false }).metadata();
+    const width = meta.width ?? 0;
+    const height = meta.height ?? 0;
+
+    if (!width || !height) return true; // ملف صورة تالف/غير قابل للقراءة
+
+    // منطق "أو": نستبعد لو أي بُعد من الاثنين أصغر من الحد الأدنى.
+    // صفحات الفصول الحقيقية عرضها وطولها كبيرين معاً عادة (800px+ عرض)،
+    // بينما الأيقونات/الشعارات الدخيلة صغيرة في الاثنين أو في واحد منهم
+    if (width < MIN_IMAGE_WIDTH || height < MIN_IMAGE_HEIGHT) return true;
+
+    return false;
+  } catch {
+    return true; // لو فشلت قراءة الصورة، نعتبرها غير صالحة ونستبعدها
+  }
+}
+
 async function extractZip(zipPath: string, destDir: string) {
   await fs.ensureDir(destDir);
   await fs.createReadStream(zipPath)
     .pipe(unzipper.Extract({ path: destDir }))
     .promise();
+}
+
+async function filterChapterImages(imagePaths: string[]): Promise<string[]> {
+  const valid: string[] = [];
+
+  for (const imagePath of imagePaths) {
+    if (isJunkPath(imagePath)) continue;
+    if (await isLikelyJunkImage(imagePath)) continue;
+    valid.push(imagePath);
+  }
+
+  return valid;
 }
 
 async function splitTallImage(imagePath: string, outDir: string): Promise<string[]> {
@@ -110,9 +163,26 @@ export async function processChapterZip(zipPath: string, originalName: string, t
 
   await extractZip(zipPath, extractedDir);
 
-  const files = (await walkFiles(extractedDir))
+  const candidateFiles = (await walkFiles(extractedDir))
     .filter(isImageFile)
     .sort(naturalCompare);
+
+  // ✅ نستبعد الصور الدخيلة (أيقونات/شعارات صغيرة + ملفات نظام/manifest)
+  // قبل المعالجة — هذي عادة تأتي من أدوات استخراج صور صفحات الويب
+  // (mhtml وغيرها) وتسبب خلط في ترتيب الفصل وتضخم غير منطقي بعدد الصفحات
+  const files = await filterChapterImages(candidateFiles);
+  const skippedCount = candidateFiles.length - files.length;
+
+  // ننظف الصور الدخيلة من القرص فوراً بما إنها مو محتاجينها
+  for (const candidate of candidateFiles) {
+    if (!files.includes(candidate)) {
+      await fs.remove(candidate).catch(() => {});
+    }
+  }
+
+  if (skippedCount > 0) {
+    console.log(`[upload] Skipped ${skippedCount} junk/icon image(s) for chapter "${chapterTitle}"`);
+  }
 
   const finalImages: string[] = [];
 
@@ -142,7 +212,8 @@ export async function processChapterZip(zipPath: string, originalName: string, t
     title: chapterTitle,
     sourceZipName: originalName,
     createdAt: new Date().toISOString(),
-    images: finalImages
+    images: finalImages,
+    skippedJunkImages: skippedCount
   };
 
   await fs.writeJson(manifestPath, manifest, { spaces: 2 });

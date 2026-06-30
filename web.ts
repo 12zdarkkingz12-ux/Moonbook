@@ -120,6 +120,7 @@ export function createWebApp(discordClient: Client): Express {
         pages: manifest.images.length,
         fileName: file.originalname,
         sizeMb,
+        skippedJunk: manifest.skippedJunkImages,
       });
 
       res.redirect('/');
