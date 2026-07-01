@@ -8,6 +8,7 @@ export interface ChapterManifest {
   createdAt: string;
   images: string[];
   skippedJunkImages?: number; // عدد الصور المستبعدة تلقائياً (أيقونات/شعارات صغيرة)
+  reversed?: boolean; // هل نعرض الفصل بترتيب معكوس (يُتحكم به من لوحة التحكم)
 }
 
 export interface ReaderSession {
@@ -98,4 +99,32 @@ export function buildProgressBar(current: number, total: number): string {
 export function sanitizeChapterId(id: string): string | null {
   if (!/^[a-z0-9\u0600-\u06FF\-]{1,80}$/.test(id)) return null;
   return id;
+}
+
+// ─── ترتيب الصور الفعّال (مع مراعاة فلاق reversed) ────────────
+// نعكس ترتيب "الصور الأصلية" (المجموعات) فقط، مع الحفاظ على ترتيب
+// القطع الصحيح داخل كل صورة (01, 02, 03...) — مهم لصفحات المانهوا
+// الطويلة المقسّمة لعدة قطع
+export function getEffectiveImages(chapter: ChapterManifest): string[] {
+  if (!chapter.reversed) return chapter.images;
+
+  const groups = new Map<string, string[]>();
+  const groupOrder: string[] = [];
+
+  for (const img of chapter.images) {
+    // المفتاح = اسم الصورة الأصلية بدون لاحقة القطعة (_01, _02...)
+    const stem = path.basename(img).replace(/_\d+(\.[a-zA-Z0-9]+)$/, '$1');
+    if (!groups.has(stem)) {
+      groups.set(stem, []);
+      groupOrder.push(stem);
+    }
+    groups.get(stem)!.push(img);
+  }
+
+  groupOrder.reverse();
+  const result: string[] = [];
+  for (const stem of groupOrder) {
+    result.push(...groups.get(stem)!);
+  }
+  return result;
 }

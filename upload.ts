@@ -143,7 +143,11 @@ async function splitTallImage(imagePath: string, outDir: string): Promise<string
   return slices;
 }
 
-export async function processChapterZip(zipPath: string, originalName: string, titleInput: string) {
+export async function processChapterZip(
+  zipPath: string,
+  originalName: string,
+  titleInput: string
+) {
   await ensureBaseDirs();
 
   if (!isZipFile(originalName)) {
@@ -205,7 +209,18 @@ export async function processChapterZip(zipPath: string, originalName: string, t
     await fs.remove(imagePath).catch(() => {});
   }
 
-  finalImages.sort(naturalCompare);
+  // ─── ترتيب نهائي ─────────────────────────────────────────
+  // المشكلة: naturalCompare يرتب '010_01' قبل '010' لأن '_' < '.' في Unicode،
+  // فلازم نوحّد أسماء الملفات للمقارنة فقط بإزالة اللاحقة + صفر بادئ للرقم
+  finalImages.sort((a, b) => {
+    const normalize = (p: string) => {
+      // pages/010_02.jpg → 010_02 → للمقارنة
+      const base = path.basename(p, path.extname(p));
+      // نحوّل أي رقم في الاسم لـ 4 خانات (010 → 0010، 010_02 → 0010_02)
+      return base.replace(/\d+/g, (n) => n.padStart(4, '0'));
+    };
+    return normalize(a).localeCompare(normalize(b));
+  });
 
   const manifest: ChapterManifest = {
     id: chapterId,
@@ -247,6 +262,20 @@ export async function getChapterManifest(chapterId: string): Promise<ChapterMani
 
 export async function deleteChapter(chapterId: string) {
   await fs.remove(path.join(CHAPTERS_DIR, chapterId));
+}
+
+// ─── تبديل حالة عكس ترتيب الفصل (يُتحكم به من لوحة التحكم) ────
+export async function toggleChapterReversed(chapterId: string): Promise<ChapterManifest> {
+  const manifestPath = path.join(CHAPTERS_DIR, chapterId, 'manifest.json');
+  if (!(await fs.pathExists(manifestPath))) {
+    throw new Error('Chapter not found');
+  }
+
+  const manifest: ChapterManifest = await fs.readJson(manifestPath);
+  manifest.reversed = !manifest.reversed;
+
+  await fs.writeJson(manifestPath, manifest, { spaces: 2 });
+  return manifest;
 }
 
 export function getChapterPagePath(chapterId: string, relativeImagePath: string) {

@@ -23,6 +23,7 @@ import {
   ReaderSession,
   SESSION_TTL_MS,
   buildProgressBar,
+  getEffectiveImages,
 } from './utils';
 import { getChapterManifest, getChapterPagePath } from './upload';
 import { createReadingRoom, deleteReadingRoom } from './room';
@@ -99,7 +100,8 @@ export async function sendCurrentPage(
   chapter: ChapterManifest,
   session: ReaderSession
 ): Promise<void> {
-  const pageRel = chapter.images[session.pageIndex];
+  const images = getEffectiveImages(chapter);
+  const pageRel = images[session.pageIndex];
   if (!pageRel) throw new Error('Page not found');
 
   const pagePath = getChapterPagePath(chapter.id, pageRel);
@@ -124,7 +126,8 @@ async function editCurrentPage(
   chapter: ChapterManifest,
   session: ReaderSession
 ): Promise<void> {
-  const pageRel = chapter.images[session.pageIndex];
+  const images = getEffectiveImages(chapter);
+  const pageRel = images[session.pageIndex];
   if (!pageRel) throw new Error('Page not found');
 
   const pagePath = getChapterPagePath(chapter.id, pageRel);
@@ -316,7 +319,7 @@ export async function handleGotoModal(
 
   await interaction.deferUpdate();
 
-  const pageRel = chapter.images[session.pageIndex];
+  const pageRel = getEffectiveImages(chapter)[session.pageIndex];
   const pagePath = getChapterPagePath(chapter.id, pageRel);
   const imageName = path.basename(pagePath);
 
